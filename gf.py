@@ -65,8 +65,10 @@ def get_uint32(fb, offset, le=True):
     return int.from_bytes(fb[offset:offset + 4], byteorder='big')
 
 
-def get_uint16(fb, offset):
-    return int.from_bytes(fb[offset:offset+2], byteorder='little')
+def get_uint16(fb, offset, le=True):
+    if le:
+        return int.from_bytes(fb[offset:offset+2], byteorder='little')
+    return int.from_bytes(fb[offset:offset+2], byteorder='big')
 
 
 def get_int32(fb, offset):
