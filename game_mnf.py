@@ -2,6 +2,7 @@ import gf
 import zlib
 from ctypes import cdll, c_char_p, create_string_buffer
 import os
+import pkg_db
 
 
 class OodleDecompressor:
@@ -95,8 +96,8 @@ def read_block_3(fb):
         comp_data = fb.read(comp_size)
         decomp_data = zlib.decompress(comp_data)
         block3.data.append(decomp_data)
-        # with open(f"test_out/{i}.bin", "wb") as f:
-        #     f.write(decomp_data)
+        with open(f"eso/mnf_{i}.bin", "wb") as f:
+            f.write(decomp_data)
     return block3
 
 
@@ -106,6 +107,8 @@ def read_block_3_f(f, offset):
     block3.record1a_count = gf.get_uint32(f, offset+4)
     block3.record1b_count = gf.get_uint32(f, offset+8)
     block3.record23_count = gf.get_uint32(f, offset+0xC)
+    if block3.record23_count == 0:
+        return None, offset
     data_count = 3
     for i in range(data_count):
         decomp_size = gf.get_uint32(f, offset+0x10)
@@ -113,6 +116,8 @@ def read_block_3_f(f, offset):
         decomp_data = zlib.decompress(f[offset+0x18:offset+0x18+comp_size])
         block3.data.append(decomp_data)
         offset += comp_size + 8
+        with open(f"eso/zosft_{i}_{offset}.bin", "wb") as qq:
+            qq.write(decomp_data)
     return block3, offset+0x10
 
 
@@ -170,6 +175,7 @@ def parse_table(block3):
             entry.ArchiveIndex = tmp
 
         m_FileTable.append(entry)
+    pkg_db.save_mnf_table(m_FileTable, "eso.mnf" in path)
     return m_FileTable
 
 
@@ -219,17 +225,21 @@ class FileTableEntry:
 
 def load_zosft_file(entry):
     zosft_data, f = read_game_data_file(entry)
+    if zosft_data[:5] != b"\x5A\x4F\x53\x46\x54":
+        raise Exception("ZOSFT file is invalid")
     # Reading header
     record_count = gf.get_uint32(zosft_data, 0xF)
     # Reading block data
     blocks = []
     offset = 0x13
-    for i in range(2):
+    for i in range(3):
         block_type = gf.get_uint16(zosft_data, offset)
         block, offset = read_block_3_f(zosft_data, offset+2)
-        blocks.append(block)
+        if block:
+            blocks.append(block)
+        else:
+            offset += 0x10
     # Reading file data
-    offset += 0x12
     file_names_length = gf.get_uint32(zosft_data, offset)
     offset += 4
     filenames = {}
@@ -296,22 +306,56 @@ def load_zosft_file(entry):
     for x in filetable:
         file_index_map[x.FileIndex] = x
     a = 0
+    pkg_db.save_zosft_table(filetable, "eso.mnf" in path)
     return file_index_map
 
 
-def read_game_data_file(entry):
+def read_data_file(entry: TableEntry):
     f = open(path.split('.')[0] + f"{gf.fill_hex_with_zeros(str(entry.ArchiveIndex), 4)}.dat", "rb")
+    file_size = f.seek(0, 2)
+    if entry.Offset + entry.CompressedSize > file_size:
+        return None
     f.seek(entry.Offset, 0)
+    raw_data = f.read(entry.CompressedSize)
+    decomp_data = None
+    if entry.CompressType == 0:
+        if raw_data[:2] == b"\x8C\x06" or raw_data[:2] == b"\xCC\x0A" or raw_data[:2] == b"\xCC\x06" or raw_data[:2] == b"\x8C\x0A":
+            decompressor = OodleDecompressor('I:/oo2core_8_win64.dll')
+            decomp_data = decompressor.decompress(raw_data, entry.Size)
+        elif raw_data[:2] == b"\x78\x9C":
+            decomp_data = zlib.decompress(raw_data)
+        else:
+            decomp_data = raw_data
+    elif entry.CompressType == 1:
+        decomp_data = zlib.decompress(raw_data)
+    elif entry.CompressType == 2:
+        print("Implement snappy compress")
+    else:
+        print("Unk compression")
+    return decomp_data
+
+
+# Only for game data, uses a different format
+def read_game_data_file(entry: TableEntry):
+    f = open(path.split('.')[0] + f"{gf.fill_hex_with_zeros(str(entry.ArchiveIndex), 4)}.dat", "rb")
+    t = f.seek(entry.Offset, 0)
+
     comp_data = f.read(entry.CompressedSize)
     if comp_data[:2] != b"\x8C\x06" and comp_data[:2] != b"\xCC\x0A" and comp_data[:2] != b"\xCC\x06" and comp_data[:2] != b"\x8C\x0A":
         #trying zlib
-        if comp_data[:2] == b"\x78\x9C":
-            decomp_data = zlib.decompress(comp_data)
-        else:
-            raise Exception("zosft fail wrong head")
+        # if comp_data[:2] == b"\x78\x9C":
+        #     decomp_data = zlib.decompress(comp_data)
+        # else:
+        #     a = hex(comp_data[0])
+        #     b = hex(comp_data[1])
+        #     print("wrong head?")
+        #     return comp_data, f
+            raise Exception("game fail wrong head")
     else:
         decompressor = OodleDecompressor('I:/oo2core_8_win64.dll')
         decomp_data = decompressor.decompress(comp_data, entry.Size)
+    if decomp_data[:5] == b"\x5A\x4F\x53\x46\x54":
+        return decomp_data, f
     header_offset1 = gf.get_uint16(decomp_data, 6, le=False) + 8
     # header_offset1 += 3
     header_offset2 = gf.get_uint32(decomp_data, header_offset1, le=False) + 4 + header_offset1
@@ -325,6 +369,8 @@ def link_to_zosft(file_table, zosft_file_index_map):
             continue
         if x.FileIndex in zosft_file_index_map.keys():
             e = zosft_file_index_map[x.FileIndex]
+            if e == None:
+                a = 0
         else:
             continue
         e.UserData += 1
@@ -332,29 +378,99 @@ def link_to_zosft(file_table, zosft_file_index_map):
 
 
 def extract_files(file_table):
+    q = "game"
+    if "eso.mnf" in path:
+        q = "eso"
+    ignore1 = 0
+    ignore2 = 0
     for i, x in enumerate(file_table):
+        # if x.ArchiveIndex > 5:
+        #     continue
         if i % 100 == 0:
             print(f"Subfile {i}/{len(file_table)}")
         # Reading data
-        data, _ = read_game_data_file(x)
+        # if not x.ZosftEntry:
+        #     ignore1 += 1
+        #     continue
+        if q == "game":
+            data, _ = read_game_data_file(x)
+        else:
+            data = read_data_file(x)
+        if not data:
+            ignore2 += 1
+            continue
         # Saving file
         if not x.ZosftEntry:
-            continue
-        savename = x.ZosftEntry.FileName.split('/')[-1]
-        savedir = x.ZosftEntry.FileName[:-len(savename)]
-        os.makedirs("test_out/" + savedir, exist_ok=True)
-        with open("test_out/" + x.ZosftEntry.FileName, "wb") as f:
+            x.ZosftEntry = FileTableEntry()
+            extension = guess_extension(data)
+            x.ZosftEntry.FileName = f"{gf.fill_hex_with_zeros(str(x.ArchiveIndex), 4)}/{gf.fill_hex_with_zeros(str(x.Index), 8)}.{extension}"
+            os.makedirs(f"{q}/{gf.fill_hex_with_zeros(str(x.ArchiveIndex), 4)}/", exist_ok=True)
+        else:
+            savename = x.ZosftEntry.FileName.split('/')[-1]
+            savedir = x.ZosftEntry.FileName[:-len(savename)]
+            os.makedirs(f"{q}/" + savedir, exist_ok=True)
+            if x.ZosftEntry.FileName == "":
+                extension = guess_extension(data)
+                x.ZosftEntry.FileName = f"{gf.fill_hex_with_zeros(str(x.ArchiveIndex), 4)}/{gf.fill_hex_with_zeros(str(x.Index), 8)}.{extension}"
+                os.makedirs(f"{q}/{gf.fill_hex_with_zeros(str(x.ArchiveIndex), 4)}/", exist_ok=True)
+        with open(f"{q}/" + x.ZosftEntry.FileName, "wb") as f:
             f.write(data)
         a = 0
+    print(ignore1, ignore2)
+
+
+def guess_extension(data):
+    if data[:3] == b"DDS":
+        return "dds"
+    elif data[:8] == b"\x00\x01\x00\x00\x00\x0E\x00\x80" or data[:4] == b"OTTO" or data[11:11+5] == b"POS/2":
+        return "ttf"
+    elif data[:7] == b"\x1E\x0D\x0B\xCD\xCE\xFA\x11":
+        return "hk"
+    elif data[:4] == b"\x29\xDE\x6C\xC0" or data[:4] == b"\xE5\x9B\x49\x5E" or data[:4] == b"\x29\x75\x31\x82"\
+    or data[:4] == b"\x0E\x11\x95\xB5" or data[:4] == b"\x0E\x74\xA2\x0A" or data[:4] == b"\xE5\x2F\x4A\xE1"\
+    or data[:4] == b"\x31\x95\xD4\xE3" or data[:4] == b"\x31\xC2\x4E\x7C":
+        return "gr2"
+    elif data[:4] == b"\x1E\x0D\xB0\xCA":
+        return "hkx"
+    elif data[:4] == b"\xFA\xFA\xEB\xEB":
+        return "EsoFileData"
+    elif data[:4] == b"\xFB\xFB\xEC\xEC":
+        return "EsoIdData"
+    elif data[:4] == b"\x00\x00\x00\x02":
+        return "EsoIdData"
+    elif data[:3] == b"\xEF\xBB\xBF":
+        return "txt"
+    elif data[:3] == b"xV4":
+        return "xv4"
+    elif data[:5] == b"__ffx":
+        return "ffx"
+    elif data[:4] == b"RIFF":
+        return "riff"
+    elif data[:2] == b"; " or data[len(data)-4:len(data)] == b".lua":
+        return "txt"
+    elif data[0] == b"#" or data[:2] == b"//" or data[:3] == b"\r\n#" or data[:2] == b"/*":
+        return "fx"
+    elif data[:2] == b"--" or data[:5] == b"local" or data[:7] == b"function":
+        return "lua"
+    elif data[0] == b"<":
+        return "xml"
+    elif data[:5] == b"ZOSFT":
+        return "zosft"
+    elif data[len(data)-5:len(data)-2] == b"end" or data[len(data)-3:len(data)] == b"end" or\
+        data[len(data)-7:len(data)-4] == b"end" or data[len(data)-2:len(data)] == b"\r":
+        return "lua"
+    elif data[:4] == b"BKHD":
+        return "bnk"
+    else:
+        return "bin"
 
 bpath = "F:/Other Games/Zenimax Online/The Elder Scrolls Online/"
 path1 = "/game/client/game.mnf"
 path2 = "/depot/eso.mnf"
-path = bpath + path1
+path = bpath + path2
 def main():
     fb = open(path, "rb")
     fb.seek(0, 2)
-    file_size = fb.tell()
     fb.seek(0, 0)
     block3 = read_header(fb)
     if not block3:
