@@ -135,6 +135,7 @@ class TableEntry:
         self.ArchiveIndex = None
         self.Unk2 = None
         self.ZosftEntry = None
+        self.FileID = None
 
 
 def parse_table(block3):
@@ -157,6 +158,7 @@ def parse_table(block3):
         if offset2 + MNF_BLOCK2_RECORDSIZE <= len(block3.data[1]):
             entry.FileIndex = gf.get_uint32(block3.data[1], offset2)
             entry.Unk1 = gf.get_uint32(block3.data[1], offset2+4)
+            entry.FileID = gf.get_uint64(block3.data[1], offset2)
             offset2 += MNF_BLOCK2_RECORDSIZE
 
         if offset3 + MNF_BLOCK3_RECORDSIZE <= len(block3.data[2]):
@@ -343,13 +345,9 @@ def read_game_data_file(entry: TableEntry):
     comp_data = f.read(entry.CompressedSize)
     if comp_data[:2] != b"\x8C\x06" and comp_data[:2] != b"\xCC\x0A" and comp_data[:2] != b"\xCC\x06" and comp_data[:2] != b"\x8C\x0A":
         #trying zlib
-        # if comp_data[:2] == b"\x78\x9C":
-        #     decomp_data = zlib.decompress(comp_data)
-        # else:
-        #     a = hex(comp_data[0])
-        #     b = hex(comp_data[1])
-        #     print("wrong head?")
-        #     return comp_data, f
+        if comp_data[:2] == b"\x78\x9C":
+            decomp_data = zlib.decompress(comp_data)
+        else:
             raise Exception("game fail wrong head")
     else:
         decompressor = OodleDecompressor('I:/oo2core_8_win64.dll')
@@ -467,7 +465,7 @@ def guess_extension(data):
 bpath = "F:/Other Games/Zenimax Online/The Elder Scrolls Online/"
 path1 = "/game/client/game.mnf"
 path2 = "/depot/eso.mnf"
-path = bpath + path2
+path = bpath + path1
 def main():
     fb = open(path, "rb")
     fb.seek(0, 2)
