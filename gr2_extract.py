@@ -151,37 +151,41 @@ class GR2:
         a = 0
 
     def get_submeshes(self):
-        # Identify section/marshalls for vertices and faces
-        mesh_index = 0
-        for i, section in enumerate(self.sections):
-            if section.mesh:
-                for j in range(section.marshalling_count):
-                    m = self.meshes[mesh_index]
-                    # TODO: there's an index system somewhere but idk where, its not 1:1
-                    m.vertex_offset = section.offset
-                    m.vertex_size = section.decomp_length
-                    m.index_offset = self.sections[i+1].offset
-                    m.index_size = self.sections[i+1].decomp_length
-                    # self.meshes[mesh_index].bytes_per_vertex = int(m.vertex_size/m.vertex_count)
-                    # self.meshes[mesh_index].bytes_per_index = int(m.index_size / m.index_count)
-                    mesh_index += 1
-
-        # debug
-        for i, x in enumerate(self.sections[0].relocations):
-            self.fb.seek(x.fixup_address, 0)
-            if gf.get_uint32(self.fb.read(4), 0) == 10:
-                a = 0
-
         # Process data
         for i, m in enumerate(self.meshes):
+            # Faces
             for j, s in enumerate(m.submeshes):
-                pass
-                # self.faces = [x]
+                self.fb.seek(m.index_offset+s.tri_offset*m.index_stride*3, 0)
+                if m.index_stride == 2:
+                    for w in range(0, s.tri_count):
+                        s.faces.append([gf.get_uint16(self.fb.read(2), 0) for k in range(3)])
+                elif m.index_stride == 4:
+                    for w in range(0, s.tri_count):
+                        s.faces.append([gf.get_uint32(self.fb.read(4), 0) for k in range(3)])
+                else:
+                    raise Exception(f"New index stride {m.index_stride}")
+            # Verts
+            self.fb.seek(m.vertex_offset, 0)
+            if m.vertex_stride == 36:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(36-12, 1)
+            elif m.vertex_stride == 44:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(44 - 12, 1)
+            elif m.vertex_stride == 48:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(48 - 12, 1)
+            else:
+                raise Exception(f"New vertex stride {m.vertex_stride}")
+            a = 0
 
     def export(self):
         for i, m in enumerate(self.meshes):
             for j, s in enumerate(m.submeshes):
-                mesh = self.create_mesh(s, f"{i}_{j}")
+                mesh = self.create_mesh(m, s, f"{i}_{j}")
                 node = fbx.FbxNode.Create(self.fbx_model.scene, f"{i}_{j}")
                 node.SetNodeAttribute(mesh)
                 node.LclScaling.Set(fbx.FbxDouble3(100, 100, 100))
@@ -189,9 +193,9 @@ class GR2:
         self.fbx_model.export(save_path=f'models/{self.name}.fbx', ascii_format=False)
         print(f'Written models/{self.name}.fbx')
 
-    def create_mesh(self, submesh, name):
+    def create_mesh(self, m, submesh, name):
         mesh = fbx.FbxMesh.Create(self.fbx_model.scene, name)
-        controlpoints = [fbx.FbxVector4(x[0], x[1], x[2]) for x in submesh.vert_pos]
+        controlpoints = [fbx.FbxVector4(x[0], x[1], x[2]) for x in m.vert_pos]
         for i, p in enumerate(controlpoints):
             mesh.SetControlPointAt(p, i)
         for face in submesh.faces:
@@ -243,8 +247,8 @@ class GR2:
             for j in range(mesh.submesh_count):
                 submesh = Submesh()
                 submesh.material_index = gf.get_uint32(self.fb.read(4), 0)
-                submesh.index_offset = mesh.index_offset + gf.get_uint32(self.fb.read(4), 0)
-                submesh.index_count = gf.get_uint32(self.fb.read(4), 0)
+                submesh.tri_offset = gf.get_uint32(self.fb.read(4), 0)
+                submesh.tri_count = gf.get_uint32(self.fb.read(4), 0)
                 mesh.submeshes.append(submesh)
         reloc_index += 1  # Empty
 
@@ -263,7 +267,6 @@ class GR2:
         for mesh in self.meshes:
             mesh.index_stride = section_bytes[mesh.index_section]
             mesh.vertex_stride = section_bytes[mesh.vertex_section]
-        a = 0
 
 
 class Mesh:
@@ -280,12 +283,12 @@ class Mesh:
         self.index_section = -1
         self.vertex_stride = -1
         self.index_stride = -1
-
+        self.vert_pos = []
 
 class Submesh:
     def __init__(self):
-        self.index_count = -1
-        self.index_offset = -1
+        self.tri_count = -1
+        self.tri_offset = -1
         self.material_index = -1
         self.vert_pos = []
         self.faces = []
