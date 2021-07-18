@@ -120,7 +120,9 @@ class GR2:
             section = Section(self)
             section.compression_flag = gf.get_uint32(self.fb.read(4), 0)
             if section.compression_flag != 0:
-                raise Exception("Comp flag != 0")
+                print(f"\nFILE IS COMPRESSED WITH FLAG {section.compression_flag}. SKIPPING...\n")
+                return False
+                # raise Exception("Comp flag != 0")
             section.offset = gf.get_uint32(self.fb.read(4), 0)
             section.decomp_length = gf.get_uint32(self.fb.read(4), 0)
             section.comp_length = gf.get_uint32(self.fb.read(4), 0)
@@ -134,10 +136,13 @@ class GR2:
             if section.relocations_count == 0 and section.marshalling_count != 0:
                 section.mesh = True
             self.sections.append(section)
+        return True
 
     def extract(self, mesh_only=True, output_path=""):
         self.get_header()
-        self.read_sections()
+        ret = self.read_sections()
+        if not ret:
+            return
         for section in self.sections:
             section.read_marshalls()
             section.read_relocations()
@@ -146,7 +151,9 @@ class GR2:
         else:
             self.mesh_sections = [x for x in self.sections if x.mesh]
             self.mesh_count = sum([x.marshalling_count for x in self.mesh_sections])
-            self.find_and_read_index_header()
+            ret = self.find_and_read_index_header()
+            if not ret:
+                return
             self.get_submeshes()
         self.export(output_path)
         a = 0
@@ -167,7 +174,12 @@ class GR2:
                     raise Exception(f"New index stride {m.index_stride}")
             # Verts
             self.fb.seek(m.vertex_offset, 0)
-            if m.vertex_stride == 36:
+            if m.vertex_stride == 32:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(32-12, 1)
+                qb = 0
+            elif m.vertex_stride == 36:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(36-12, 1)
@@ -179,12 +191,14 @@ class GR2:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(48 - 12, 1)
+            elif m.vertex_stride == 60:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(60 - 12, 1)
             elif m.vertex_stride == 68:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(68 - 12, 1)
-                a = 0
-                b = 0
             else:
                 raise Exception(f"New vertex stride {m.vertex_stride}")
             a = 0
@@ -233,7 +247,9 @@ class GR2:
         return mesh
 
     def find_and_read_index_header(self):
-        reloc_index = 0
+        if self.name == '00151195':
+            a = 0
+        reloc_index = -1
         relocations = self.sections[0].relocations
         for i, x in enumerate(relocations):
             self.fb.seek(x.fixup_address, 0)
@@ -247,8 +263,12 @@ class GR2:
 
                 reloc_index = i
                 break
-        if self.name == '00150373':
-            a = 0
+
+        if reloc_index == -1:
+            print("Model could not be found... please fix this as there is a model here prob")
+            return False
+        q = 0
+
         for i in range(self.mesh_count):
             mesh = Mesh()
             reloc_index += 1  # Type 10
@@ -259,6 +279,9 @@ class GR2:
             # Vertex count
             self.fb.seek(relocations[reloc_index].fixup_address+8, 0)
             mesh.vertex_count = gf.get_uint32(self.fb.read(4), 0)
+            if mesh.vertex_count == 0:
+                print("Model could not be found... please fix this as there is a model here prob")
+                return False
             reloc_index += 1
             self.meshes.append(mesh)
         reloc_index += 1  # Empty
@@ -304,6 +327,7 @@ class GR2:
         for mesh in self.meshes:
             mesh.index_stride = section_bytes[mesh.index_section]
             mesh.vertex_stride = section_bytes[mesh.vertex_section]
+        return True
 
 
 def trim_verts_data(verts, dsort, vc=False):
