@@ -256,10 +256,13 @@ class GR2:
             mesh.index_section = relocations[reloc_index].section_ref
             reloc_index += 1
             # Index count and part count
-            self.fb.seek(relocations[reloc_index].fixup_address, 0)
+            debug = self.fb.seek(relocations[reloc_index].fixup_address, 0)
             mesh.submesh_count = gf.get_uint32(self.fb.read(4), 0)
             self.fb.seek(8, 1)
             mesh.index_count = gf.get_uint32(self.fb.read(4), 0)
+            if mesh.index_count == 0:
+                self.fb.seek(8, 1)
+                mesh.index_count = gf.get_uint32(self.fb.read(4), 0)
             reloc_index += 1
             # Processing data
             self.fb.seek(part_def_offset, 0)
@@ -333,9 +336,9 @@ def extract_gr2(path):
 
 
 if __name__ == "__main__":
-    base_path = "P:/ESO/Tools/Extractor/eso/0111"
-    file_name = "00158583.gr2"
-    extract_gr2(f"{base_path}/{file_name}")
+    # base_path = "P:/ESO/Tools/Extractor/eso/0111"
+    # file_name = "00158583.gr2"
+    # extract_gr2(f"{base_path}/{file_name}")
 
     base_path = "P:/ESO/Tools/Extractor/eso/0110"
     file_name = "00153738.gr2"
