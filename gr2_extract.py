@@ -1,6 +1,7 @@
 import gf
 import fbx
 import pyfbx
+import os
 
 
 """
@@ -134,7 +135,7 @@ class GR2:
                 section.mesh = True
             self.sections.append(section)
 
-    def extract(self, mesh_only=True):
+    def extract(self, mesh_only=True, output_path=""):
         self.get_header()
         self.read_sections()
         for section in self.sections:
@@ -147,7 +148,7 @@ class GR2:
             self.mesh_count = sum([x.marshalling_count for x in self.mesh_sections])
             self.find_and_read_index_header()
             self.get_submeshes()
-        self.export()
+        self.export(output_path)
         a = 0
 
     def get_submeshes(self):
@@ -178,6 +179,12 @@ class GR2:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(48 - 12, 1)
+            elif m.vertex_stride == 68:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(68 - 12, 1)
+                a = 0
+                b = 0
             else:
                 raise Exception(f"New vertex stride {m.vertex_stride}")
             a = 0
@@ -201,7 +208,7 @@ class GR2:
 
                 s.vert_pos = trim_verts_data(m.vert_pos, dsort)
 
-    def export(self):
+    def export(self, output_path):
         for i, m in enumerate(self.meshes):
             for j, s in enumerate(m.submeshes):
                 mesh = self.create_mesh(s, f"{i}_{j}")
@@ -209,8 +216,8 @@ class GR2:
                 node.SetNodeAttribute(mesh)
                 node.LclScaling.Set(fbx.FbxDouble3(100, 100, 100))
                 self.fbx_model.scene.GetRootNode().AddChild(node)
-        self.fbx_model.export(save_path=f'models/{self.name}.fbx', ascii_format=False)
-        print(f'Written models/{self.name}.fbx')
+        self.fbx_model.export(save_path=f'models/{output_path}/{self.name}.fbx', ascii_format=False)
+        print(f'Written models/{output_path}/{self.name}.fbx')
 
     def create_mesh(self, submesh, name):
         mesh = fbx.FbxMesh.Create(self.fbx_model.scene, name)
@@ -231,9 +238,13 @@ class GR2:
         for i, x in enumerate(relocations):
             self.fb.seek(x.fixup_address, 0)
             if gf.get_uint32(self.fb.read(4), 0) == 10:
+                self.fb.seek(relocations[i+2].fixup_address, 0)
+                if gf.get_uint32(self.fb.read(4), 0) != 0:
+                    continue
                 reloc_index = i
                 break
-
+        if self.name == '00149830':
+            a = 0
         for i in range(self.mesh_count):
             mesh = Mesh()
             reloc_index += 1  # Type 10
@@ -335,11 +346,23 @@ def extract_gr2(path):
     a = 0
 
 
+def extract_folder(folder):
+    output = folder.split('/')[-1]
+    os.makedirs("models/" + output, exist_ok=True)
+    for file in os.listdir(folder):
+        if ".gr2" not in file:
+            continue
+        gr2 = GR2(f"{folder}/{file}")
+        gr2.extract(mesh_only=True, output_path=output)
+
+
 if __name__ == "__main__":
     # base_path = "P:/ESO/Tools/Extractor/eso/0111"
     # file_name = "00158583.gr2"
     # extract_gr2(f"{base_path}/{file_name}")
 
     base_path = "P:/ESO/Tools/Extractor/eso/0110"
-    file_name = "00153738.gr2"
-    extract_gr2(f"{base_path}/{file_name}")
+    # file_name = "00153738.gr2"
+    # extract_gr2(f"{base_path}/{file_name}")
+
+    extract_folder(base_path)
