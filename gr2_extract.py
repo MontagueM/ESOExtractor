@@ -248,6 +248,21 @@ class GR2:
                 mesh.submeshes.append(submesh)
         reloc_index += 1  # Empty
 
+        # Getting strides
+        counts = {}
+        for mesh in self.meshes:
+            if mesh.index_section not in counts.keys():
+                counts[mesh.index_section] = 0
+            counts[mesh.index_section] += mesh.index_count
+            if mesh.vertex_section not in counts.keys():
+                counts[mesh.vertex_section] = 0
+            counts[mesh.vertex_section] += mesh.vertex_count
+        section_bytes = {}
+        for section, count in counts.items():
+            section_bytes[section] = int(self.sections[section].decomp_length/count)
+        for mesh in self.meshes:
+            mesh.index_stride = section_bytes[mesh.index_section]
+            mesh.vertex_stride = section_bytes[mesh.vertex_section]
         a = 0
 
 
@@ -263,6 +278,8 @@ class Mesh:
         self.vertex_size = -1
         self.vertex_section = -1
         self.index_section = -1
+        self.vertex_stride = -1
+        self.index_stride = -1
 
 
 class Submesh:
