@@ -182,10 +182,29 @@ class GR2:
                 raise Exception(f"New vertex stride {m.vertex_stride}")
             a = 0
 
+            # I'm going to assume the min is in first and max in last vert for submeshes, if its not use dict method like in D2 stuff
+            for j, s in enumerate(m.submeshes):
+                dsort = set()
+                for face in s.faces:
+                    for f in face:
+                        dsort.add(f)
+                dsort = sorted(dsort)
+
+                if not dsort:
+                    continue
+
+                # Moves all the faces down to start at 0
+                d = dict(zip(dsort, range(max(dsort) + 1)))
+                for j in range(len(s.faces)):
+                    for k in range(3):
+                        s.faces[j][k] = d[s.faces[j][k]]
+
+                s.vert_pos = trim_verts_data(m.vert_pos, dsort)
+
     def export(self):
         for i, m in enumerate(self.meshes):
             for j, s in enumerate(m.submeshes):
-                mesh = self.create_mesh(m, s, f"{i}_{j}")
+                mesh = self.create_mesh(s, f"{i}_{j}")
                 node = fbx.FbxNode.Create(self.fbx_model.scene, f"{i}_{j}")
                 node.SetNodeAttribute(mesh)
                 node.LclScaling.Set(fbx.FbxDouble3(100, 100, 100))
@@ -193,9 +212,9 @@ class GR2:
         self.fbx_model.export(save_path=f'models/{self.name}.fbx', ascii_format=False)
         print(f'Written models/{self.name}.fbx')
 
-    def create_mesh(self, m, submesh, name):
+    def create_mesh(self, submesh, name):
         mesh = fbx.FbxMesh.Create(self.fbx_model.scene, name)
-        controlpoints = [fbx.FbxVector4(x[0], x[1], x[2]) for x in m.vert_pos]
+        controlpoints = [fbx.FbxVector4(x[0], x[1], x[2]) for x in submesh.vert_pos]
         for i, p in enumerate(controlpoints):
             mesh.SetControlPointAt(p, i)
         for face in submesh.faces:
@@ -267,6 +286,19 @@ class GR2:
         for mesh in self.meshes:
             mesh.index_stride = section_bytes[mesh.index_section]
             mesh.vertex_stride = section_bytes[mesh.vertex_section]
+
+
+def trim_verts_data(verts, dsort, vc=False):
+    v_new = []
+    for i in dsort:
+        if vc:
+            if i >= len(verts):
+                v_new.append([0, 0, 0, 0])
+            else:
+                v_new.append(verts[i])
+        else:
+            v_new.append(verts[i])
+    return v_new
 
 
 class Mesh:
