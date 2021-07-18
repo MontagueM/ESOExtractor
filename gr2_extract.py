@@ -157,12 +157,20 @@ class GR2:
             if section.mesh:
                 for j in range(section.marshalling_count):
                     m = self.meshes[mesh_index]
+                    # TODO: there's an index system somewhere but idk where, its not 1:1
                     m.vertex_offset = section.offset
                     m.vertex_size = section.decomp_length
                     m.index_offset = self.sections[i+1].offset
                     m.index_size = self.sections[i+1].decomp_length
-                    self.meshes[mesh_index].bytes_per_vertex = int(m.vertex_size/m.vertex_count)
+                    # self.meshes[mesh_index].bytes_per_vertex = int(m.vertex_size/m.vertex_count)
+                    # self.meshes[mesh_index].bytes_per_index = int(m.index_size / m.index_count)
                     mesh_index += 1
+
+        # debug
+        for i, x in enumerate(self.sections[0].relocations):
+            self.fb.seek(x.fixup_address, 0)
+            if gf.get_uint32(self.fb.read(4), 0) == 10:
+                a = 0
 
         # Process data
         for i, m in enumerate(self.meshes):
@@ -195,34 +203,51 @@ class GR2:
         return mesh
 
     def find_and_read_index_header(self):
-        only_zero_relocations = [x for x in self.sections[0].relocations if x.section_ref == 0]
-        index_offset = 0
-        for i in range(len(only_zero_relocations)):
-            diff = only_zero_relocations[i+1].fixup_address-only_zero_relocations[i].fixup_address
-            if diff == 44:
-                index_offset = only_zero_relocations[i].fixup_address
-                if index_offset < 14000:  # TODO needs adjustment
-                    continue
+        reloc_index = 0
+        relocations = self.sections[0].relocations
+        for i, x in enumerate(relocations):
+            self.fb.seek(x.fixup_address, 0)
+            if gf.get_uint32(self.fb.read(4), 0) == 10:
+                reloc_index = i
                 break
-        self.fb.seek(index_offset+8, 0)
+
         for i in range(self.mesh_count):
             mesh = Mesh()
+            reloc_index += 1  # Type 10
+            # Vertex offset
+            mesh.vertex_offset = relocations[reloc_index].fixup_address
+            mesh.vertex_section = relocations[reloc_index].section_ref
+            reloc_index += 1
+            # Vertex count
+            self.fb.seek(relocations[reloc_index].fixup_address+8, 0)
             mesh.vertex_count = gf.get_uint32(self.fb.read(4), 0)
-            self.fb.seek(40, 1)
+            reloc_index += 1
             self.meshes.append(mesh)
-        self.fb.seek(16, 1)
-        for i in range(self.mesh_count):
-            mesh = self.meshes[i]
+        reloc_index += 1  # Empty
+        for mesh in self.meshes:
+            # Parts definition
+            part_def_offset = relocations[reloc_index].fixup_address
+            reloc_index += 1
+            # Index offset
+            mesh.index_offset = relocations[reloc_index].fixup_address
+            mesh.index_section = relocations[reloc_index].section_ref
+            reloc_index += 1
+            # Index count and part count
+            self.fb.seek(relocations[reloc_index].fixup_address, 0)
             mesh.submesh_count = gf.get_uint32(self.fb.read(4), 0)
             self.fb.seek(8, 1)
             mesh.index_count = gf.get_uint32(self.fb.read(4), 0)
-            self.fb.seek(116, 1)
+            reloc_index += 1
+            # Processing data
+            self.fb.seek(part_def_offset, 0)
             for j in range(mesh.submesh_count):
                 submesh = Submesh()
                 submesh.material_index = gf.get_uint32(self.fb.read(4), 0)
                 submesh.index_offset = mesh.index_offset + gf.get_uint32(self.fb.read(4), 0)
                 submesh.index_count = gf.get_uint32(self.fb.read(4), 0)
                 mesh.submeshes.append(submesh)
+        reloc_index += 1  # Empty
+
         a = 0
 
 
@@ -236,6 +261,8 @@ class Mesh:
         self.vertex_offset = -1
         self.index_size = -1
         self.vertex_size = -1
+        self.vertex_section = -1
+        self.index_section = -1
 
 
 class Submesh:
@@ -256,4 +283,8 @@ def extract_gr2(path):
 if __name__ == "__main__":
     base_path = "P:/ESO/Tools/Extractor/eso/0111"
     file_name = "00158583.gr2"
+    extract_gr2(f"{base_path}/{file_name}")
+
+    base_path = "P:/ESO/Tools/Extractor/eso/0110"
+    file_name = "00153738.gr2"
     extract_gr2(f"{base_path}/{file_name}")
