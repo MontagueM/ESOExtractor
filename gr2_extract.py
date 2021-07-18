@@ -238,12 +238,16 @@ class GR2:
         for i, x in enumerate(relocations):
             self.fb.seek(x.fixup_address, 0)
             if gf.get_uint32(self.fb.read(4), 0) == 10:
+                self.fb.seek(relocations[i+1].fixup_address, 0)
+                if gf.get_uint32(self.fb.read(4), 0) == 0:
+                    continue
                 self.fb.seek(relocations[i+2].fixup_address, 0)
                 if gf.get_uint32(self.fb.read(4), 0) != 0:
                     continue
+
                 reloc_index = i
                 break
-        if self.name == '00149830':
+        if self.name == '00150373':
             a = 0
         for i in range(self.mesh_count):
             mesh = Mesh()
