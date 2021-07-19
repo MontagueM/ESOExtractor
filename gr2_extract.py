@@ -2,7 +2,7 @@ import gf
 import fbx
 import pyfbx
 import os
-
+import multiprocessing as mp
 
 """
 https://github.com/Norbyte/lslib/blob/master/LSLib/Granny/GR2/Reader.cs
@@ -86,14 +86,14 @@ class Marshall:
         self.data = b''
 
 class GR2:
-    def __init__(self, file_path):
+    def __init__(self, file_path, override_model=pyfbx.Model()):
         self.header = Header()
         self.sections = []
         self.mesh_sections = []
         self.mesh_count = -1
         self.fb = open(file_path, "rb")
         self.meshes = []
-        self.fbx_model = pyfbx.Model()
+        self.fbx_model = override_model
         self.name = file_path.split('/')[-1].split('.')[0]
 
     def get_header(self):
@@ -138,7 +138,7 @@ class GR2:
             self.sections.append(section)
         return True
 
-    def extract(self, mesh_only=True, output_path=""):
+    def extract(self, mesh_only=True, output_path="", save=True):
         self.get_header()
         ret = self.read_sections()
         if not ret:
@@ -154,9 +154,10 @@ class GR2:
             ret = self.find_and_read_index_header()
             if not ret:
                 return
-            self.get_submeshes()
-        self.export(output_path)
-        a = 0
+            ret = self.get_submeshes()
+            if not ret:
+                return
+        return self.export(output_path, save)
 
     def get_submeshes(self):
         # Process data
@@ -171,10 +172,16 @@ class GR2:
                     for w in range(0, s.tri_count):
                         s.faces.append([gf.get_uint32(self.fb.read(4), 0) for k in range(3)])
                 else:
-                    raise Exception(f"New index stride {m.index_stride}")
+                    print("Stride broken vertex")
+                    return False
+                    # raise Exception(f"New index stride {m.index_stride}")
             # Verts
             self.fb.seek(m.vertex_offset, 0)
             if m.vertex_stride == 32:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(32-12, 1)
+            elif m.vertex_stride == 35:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(32-12, 1)
@@ -183,6 +190,21 @@ class GR2:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(36-12, 1)
+            elif m.vertex_stride == 38:  # unchecked
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(38-12, 1)
+                qb = 0
+            elif m.vertex_stride == 40:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(40-12, 1)
+                qb = 0
+            elif m.vertex_stride == 42:
+                for w in range(m.vertex_count):
+                    m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
+                    self.fb.seek(42-12, 1)
+                qb = 0
             elif m.vertex_stride == 44:
                 for w in range(m.vertex_count):
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
@@ -200,7 +222,10 @@ class GR2:
                     m.vert_pos.append([gf.get_float32(self.fb.read(4), 0) for k in range(3)])
                     self.fb.seek(68 - 12, 1)
             else:
-                raise Exception(f"New vertex stride {m.vertex_stride}")
+                # if m.vertex_stride == 0 or m.vertex_stride == 37 or m.vertex_stride == 41 or m.vertex_stride == 50:
+                print("Stride broken vertex")
+                return False
+                # raise Exception(f"New vertex stride {m.vertex_stride}")
             a = 0
 
             # I'm going to assume the min is in first and max in last vert for submeshes, if its not use dict method like in D2 stuff
@@ -221,17 +246,23 @@ class GR2:
                         s.faces[j][k] = d[s.faces[j][k]]
 
                 s.vert_pos = trim_verts_data(m.vert_pos, dsort)
+        return True
 
-    def export(self, output_path):
+    def export(self, output_path, save):
+        meshes = []
         for i, m in enumerate(self.meshes):
             for j, s in enumerate(m.submeshes):
                 mesh = self.create_mesh(s, f"{i}_{j}")
                 node = fbx.FbxNode.Create(self.fbx_model.scene, f"{i}_{j}")
                 node.SetNodeAttribute(mesh)
                 node.LclScaling.Set(fbx.FbxDouble3(100, 100, 100))
-                self.fbx_model.scene.GetRootNode().AddChild(node)
-        self.fbx_model.export(save_path=f'models/{output_path}/{self.name}.fbx', ascii_format=False)
-        print(f'Written models/{output_path}/{self.name}.fbx')
+                if save:
+                    self.fbx_model.scene.GetRootNode().AddChild(node)
+                meshes.append(mesh)
+        if save:
+            self.fbx_model.export(save_path=f'models/{output_path}/{self.name}.fbx', ascii_format=False)
+            print(f'Written models/{output_path}/{self.name}.fbx')
+        return meshes
 
     def create_mesh(self, submesh, name):
         mesh = fbx.FbxMesh.Create(self.fbx_model.scene, name)
@@ -368,20 +399,20 @@ class Submesh:
         self.faces = []
 
 
-def extract_gr2(path):
+def extract_gr2(path, output_path=""):
     gr2 = GR2(path)
-    gr2.extract(mesh_only=True)
-    a = 0
+    gr2.extract(mesh_only=True, output_path=output_path)
 
 
 def extract_folder(folder):
+    t_pool = mp.Pool(mp.cpu_count())
+
     output = folder.split('/')[-1]
     os.makedirs("models/" + output, exist_ok=True)
-    for file in os.listdir(folder):
-        if ".gr2" not in file:
-            continue
-        gr2 = GR2(f"{folder}/{file}")
-        gr2.extract(mesh_only=True, output_path=output)
+    _args = [(f"{folder}/{file}", output) for file in os.listdir(folder) if ".gr2" in file]
+
+    t_pool.starmap(extract_gr2, _args)
+    t_pool.close()
 
 
 if __name__ == "__main__":
@@ -389,7 +420,7 @@ if __name__ == "__main__":
     # file_name = "00158583.gr2"
     # extract_gr2(f"{base_path}/{file_name}")
 
-    base_path = "P:/ESO/Tools/Extractor/eso/0110"
+    base_path = "P:/ESO/Tools/Extractor/eso/0114"
     # file_name = "00153738.gr2"
     # extract_gr2(f"{base_path}/{file_name}")
 

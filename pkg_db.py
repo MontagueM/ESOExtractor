@@ -37,3 +37,17 @@ def save_zosft_table(file_table, b_is_eso):
               entries)
     con.commit()
     print(f"Added {len(entries)} entries to ZOSFT db")
+
+
+def start_mnf_connection():
+    global mnfcon
+    global mnfc
+    mnfcon = sq.connect(f'MNF.db')
+    mnfc = mnfcon.cursor()
+
+
+def get_entries_from_mnf(column_select='*'):
+    global mnfc
+    mnfc.execute("SELECT " + column_select + " from eso")
+    rows = mnfc.fetchall()
+    return rows
